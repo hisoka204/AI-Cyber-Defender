@@ -735,7 +735,7 @@ async def process_event_queue():
     logger.info("Queue processor started")
 
     while not _shutdown_event.is_set():
-        if not redis_client or redis_cb.state == CircuitState.OPEN
+        if not redis_client or redis_cb.state == CircuitState.OPEN:
             logger.warning(
                 f"Queue processor paused — Redis unavailable. "
                 f"Retrying in {backoff_s:.0f}s"
