@@ -12,5 +12,5 @@ def setup_logging(name: str) -> logging.Logger:
     Returns:
         Configured logger instance
     """
-    # Implementation here
-    pass
+    logger = logging.getLogger(name)
+    return logger
