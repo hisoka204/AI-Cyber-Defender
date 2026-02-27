@@ -6,6 +6,7 @@ import os
 import json
 import logging
 import asyncio
+import sys
 from datetime import datetime
 from typing import Optional
 from pathlib import Path
@@ -18,11 +19,10 @@ import joblib
 import numpy as np
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from services.utils.logging_config import setup_logging
+logger = setup_logging(__name__)
 
 # Environment configuration
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
