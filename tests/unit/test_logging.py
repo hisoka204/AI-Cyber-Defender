@@ -6,7 +6,7 @@ import os
 from logging.handlers import RotatingFileHandler
 import pytest
 
-# Ajout du chemin pour trouver le module
+# Add project root to sys.path to find the module
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
