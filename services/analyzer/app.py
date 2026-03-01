@@ -4,7 +4,6 @@ ML-based threat detection engine for LLM prompts.
 """
 import os
 import json
-import logging
 import asyncio
 import sys
 from datetime import datetime
