@@ -12,7 +12,7 @@ def setup_logging(name: str) -> logging.Logger:
     Returns:
         Configured logger instance
 
-    EXEMPLES usage :
+    Examples:
         >>> from services.utils.logging_config import setup_logging
         >>> logger = setup_logging(__name__)
         >>> logger.info("Service started")
