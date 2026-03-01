@@ -4,7 +4,6 @@ Middleware layer for intercepting and processing LLM requests.
 """
 import os
 import uuid
-import logging
 import sys
 from datetime import datetime
 from typing import Optional
