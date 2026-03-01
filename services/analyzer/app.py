@@ -236,7 +236,7 @@ def heuristic_analysis(prompt: str) -> dict:
             "override system": 0.85,
             "</s>": 0.90,
             "<|system|>": 0.95,
-            "\\n\\n###": 0.80,
+            "\n\n###": 0.80,
         },
         "jailbreak": {
             "do anything now": 0.90,
