@@ -150,7 +150,7 @@ async def shutdown():
                 await background_task
             except asyncio.CancelledError:
                 logger.info("Background task cancelled successfully")
-                raise
+                
     
     # Close Redis connection
     if redis_client:
