@@ -63,8 +63,8 @@ background_task = None
 # Models
 class AnalysisRequest(BaseModel):
     """Request for prompt analysis."""
-    prompt: str = Field(..., description="The prompt to analyze")
-    context: Optional[str] = Field(None, description="Additional context")
+    prompt: str = Field(..., description="The prompt to analyze", min_length=1, max_length=10000)
+    context: Optional[str] = Field(None, description="Additional context", max_length=5000)
 
 
 class AnalysisResponse(BaseModel):
@@ -120,7 +120,7 @@ async def startup():
             logger.info("ML models loaded successfully")
         else:
             logger.warning(f"ML models not found at {MODEL_PATH}")
-    except Exception as e:
+    except Exception:
         logger.exception("Failed to load ML models")
     
     # Create stop event and start background processor
@@ -176,8 +176,8 @@ async def health_check():
         try:
             await redis_client.ping()
             redis_connected = True
-        except Exception as e:
-            logger.error(f"Redis health check failed: {e}", exc_info=True)
+        except Exception:
+            logger.exception("Redis health check failed")
             redis_connected = False
     
     return HealthResponse(
@@ -362,8 +362,22 @@ async def _wait_for_stop_event():
     await stop_event.wait()
 
 
+async def _wait_with_timeout(seconds: float):
+    """Wait for stop event with timeout, suppressing TimeoutError."""
+    try:
+        async with asyncio.timeout(seconds):
+            await _wait_for_stop_event()
+    except asyncio.TimeoutError:
+        pass
+
+
 async def _update_and_store_event(event: dict, event_id: str, result: AnalysisResponse):
     """Update event with analysis results and store in Redis."""
+    # Ensure redis_client is available
+    if not redis_client:
+        logger.warning(f"Cannot store event {event_id}: Redis client not available")
+        return
+    
     # Update the event with analysis results
     event["analyzed"] = True
     event["risk_score"] = result.risk_score
@@ -387,25 +401,49 @@ async def _update_and_store_event(event: dict, event_id: str, result: AnalysisRe
 
 async def _process_single_event(event_json: str):
     """Process a single event from the queue."""
-    event = json.loads(event_json)
+    try:
+        event = json.loads(event_json)
+    except json.JSONDecodeError:
+        logger.exception("Failed to parse event JSON")
+        return
+    
+    # Validate event structure
+    if not isinstance(event, dict):
+        logger.warning("Event is not a dictionary, skipping")
+        return
     
     # Validate event_id presence
     event_id = event.get('event_id')
-    if not event_id:
+    if not event_id or not isinstance(event_id, str):
         # Log only safe metadata, avoid exposing sensitive prompts
         safe_summary = {
             "user_id": event.get('user_id'),
             "timestamp": event.get('timestamp'),
             "has_prompt": 'prompt' in event,
-            "prompt_length": len(event.get('prompt', ''))
+            "prompt_length": len(event.get('prompt', '')) if isinstance(event.get('prompt'), str) else 0
         }
-        logger.warning(f"Skipping event without event_id. Safe metadata: {safe_summary}")
+        logger.warning(f"Skipping event without valid event_id. Safe metadata: {safe_summary}")
         return
     
     logger.info(f"Processing event: {event_id}")
     
+    # Get and validate prompt
+    prompt = event.get("prompt", "")
+    if not isinstance(prompt, str):
+        logger.warning(f"Event {event_id} has invalid prompt type, skipping")
+        return
+    
+    if not prompt.strip():
+        logger.warning(f"Event {event_id} has empty prompt, skipping")
+        return
+    
+    # Truncate very long prompts for safety
+    if len(prompt) > 10000:
+        logger.warning(f"Event {event_id} has overly long prompt ({len(prompt)} chars), truncating")
+        prompt = prompt[:10000]
+    
     # Analyze the prompt
-    result = run_analysis(event.get("prompt", ""))
+    result = run_analysis(prompt)
     
     # Update and store event
     await _update_and_store_event(event, event_id, result)
@@ -418,11 +456,7 @@ async def process_event_queue():
     while not stop_event.is_set():
         try:
             if not redis_client:
-                try:
-                    async with asyncio.timeout(5.0):
-                        await _wait_for_stop_event()
-                except asyncio.TimeoutError:
-                    pass
+                await _wait_with_timeout(5.0)
                 continue
             
             # Pop event from queue
@@ -431,19 +465,11 @@ async def process_event_queue():
             if event_json:
                 await _process_single_event(event_json)
             else:
-                try:
-                    async with asyncio.timeout(1.0):
-                        await _wait_for_stop_event()
-                except asyncio.TimeoutError:
-                    pass
+                await _wait_with_timeout(1.0)
                 
         except Exception:
             logger.exception("Queue processing error")
-            try:
-                async with asyncio.timeout(5.0):
-                    await _wait_for_stop_event()
-            except asyncio.TimeoutError:
-                pass
+            await _wait_with_timeout(5.0)
 
 
 if __name__ == "__main__":
