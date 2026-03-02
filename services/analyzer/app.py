@@ -104,7 +104,7 @@ async def startup():
         )
         await redis_client.ping()
         logger.info(f"Connected to Redis at {REDIS_HOST}:{REDIS_PORT}")
-    except Exception as e:
+    except Exception:
         logger.exception("Failed to connect to Redis")
         redis_client = None
     
@@ -150,6 +150,7 @@ async def shutdown():
                 await background_task
             except asyncio.CancelledError:
                 logger.info("Background task cancelled successfully")
+                raise
     
     # Close Redis connection
     if redis_client:
@@ -348,20 +349,17 @@ def ml_analysis(prompt: str) -> dict:
             "threat_type": "prompt_injection" if malicious_prob > 0.5 else None,
             "confidence": float(max(proba))
         }
-    except Exception as e:
+    except Exception:
         logger.exception("ML analysis error")
         return {"risk_score": 0.0, "verdict": "error", "threat_type": None, "confidence": 0.0}
 
 
-async def _wait_for_stop_event(timeout: float):
-    """Helper to wait for stop event with timeout."""
+async def _wait_for_stop_event():
+    """Helper to wait for stop event. Use with asyncio.timeout() context manager."""
     # Defensive check: ensure stop_event exists before awaiting
     if stop_event is None:
         return
-    try:
-        await asyncio.wait_for(stop_event.wait(), timeout=timeout)
-    except asyncio.TimeoutError:
-        pass
+    await stop_event.wait()
 
 
 async def _update_and_store_event(event: dict, event_id: str, result: AnalysisResponse):
@@ -420,7 +418,11 @@ async def process_event_queue():
     while not stop_event.is_set():
         try:
             if not redis_client:
-                await _wait_for_stop_event(5.0)
+                try:
+                    async with asyncio.timeout(5.0):
+                        await _wait_for_stop_event()
+                except asyncio.TimeoutError:
+                    pass
                 continue
             
             # Pop event from queue
@@ -429,11 +431,19 @@ async def process_event_queue():
             if event_json:
                 await _process_single_event(event_json)
             else:
-                await _wait_for_stop_event(1.0)
+                try:
+                    async with asyncio.timeout(1.0):
+                        await _wait_for_stop_event()
+                except asyncio.TimeoutError:
+                    pass
                 
-        except Exception as e:
+        except Exception:
             logger.exception("Queue processing error")
-            await _wait_for_stop_event(5.0)
+            try:
+                async with asyncio.timeout(5.0):
+                    await _wait_for_stop_event()
+            except asyncio.TimeoutError:
+                pass
 
 
 if __name__ == "__main__":
