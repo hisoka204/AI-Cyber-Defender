@@ -41,10 +41,12 @@ app = FastAPI(
     version="0.1.0"
 )
 
-# CORS middleware
+# CORS middleware - configurable origins for security
+CORS_ALLOWED_ORIGINS = os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173")
+allowed_origins = [origin.strip() for origin in CORS_ALLOWED_ORIGINS.split(",")]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -103,7 +105,7 @@ async def startup():
         await redis_client.ping()
         logger.info(f"Connected to Redis at {REDIS_HOST}:{REDIS_PORT}")
     except Exception as e:
-        logger.error(f"Failed to connect to Redis: {e}")
+        logger.exception("Failed to connect to Redis")
         redis_client = None
     
     # Load ML models
@@ -119,7 +121,7 @@ async def startup():
         else:
             logger.warning(f"ML models not found at {MODEL_PATH}")
     except Exception as e:
-        logger.error(f"Failed to load ML models: {e}")
+        logger.exception("Failed to load ML models")
     
     # Create stop event and start background processor
     stop_event = asyncio.Event()
@@ -148,7 +150,6 @@ async def shutdown():
                 await background_task
             except asyncio.CancelledError:
                 logger.info("Background task cancelled successfully")
-                raise
     
     # Close Redis connection
     if redis_client:
@@ -159,7 +160,7 @@ async def shutdown():
             logger.debug("Redis close failed during shutdown", exc_info=True)
 
 
-def verify_api_key(x_api_key: str = Header(...)):
+def verify_api_key(x_api_key: str):
     """Verify API key for authentication."""
     if x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API key")
@@ -348,12 +349,15 @@ def ml_analysis(prompt: str) -> dict:
             "confidence": float(max(proba))
         }
     except Exception as e:
-        logger.error(f"ML analysis error: {e}")
+        logger.exception("ML analysis error")
         return {"risk_score": 0.0, "verdict": "error", "threat_type": None, "confidence": 0.0}
 
 
 async def _wait_for_stop_event(timeout: float):
     """Helper to wait for stop event with timeout."""
+    # Defensive check: ensure stop_event exists before awaiting
+    if stop_event is None:
+        return
     try:
         await asyncio.wait_for(stop_event.wait(), timeout=timeout)
     except asyncio.TimeoutError:
@@ -390,7 +394,14 @@ async def _process_single_event(event_json: str):
     # Validate event_id presence
     event_id = event.get('event_id')
     if not event_id:
-        logger.warning(f"Skipping event without event_id. Raw event: {event_json}")
+        # Log only safe metadata, avoid exposing sensitive prompts
+        safe_summary = {
+            "user_id": event.get('user_id'),
+            "timestamp": event.get('timestamp'),
+            "has_prompt": 'prompt' in event,
+            "prompt_length": len(event.get('prompt', ''))
+        }
+        logger.warning(f"Skipping event without event_id. Safe metadata: {safe_summary}")
         return
     
     logger.info(f"Processing event: {event_id}")
@@ -421,7 +432,7 @@ async def process_event_queue():
                 await _wait_for_stop_event(1.0)
                 
         except Exception as e:
-            logger.error(f"Queue processing error: {e}")
+            logger.exception("Queue processing error")
             await _wait_for_stop_event(5.0)
 
 
